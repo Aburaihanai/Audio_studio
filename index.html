@@ -1,0 +1,175 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Ultimate Audio Studio</title>
+    <style>
+        :root { --primary: #6c5ce7; --danger: #ff7675; --success: #55efc4; --dark: #2d3436; }
+        body { font-family: 'Segoe UI', sans-serif; background: #f0f2f5; display: flex; justify-content: center; padding: 20px; margin: 0; }
+        .studio-card { background: white; padding: 30px; border-radius: 24px; box-shadow: 0 15px 35px rgba(0,0,0,0.1); width: 100%; max-width: 550px; text-align: center; }
+        
+        canvas { width: 100%; height: 120px; background: var(--dark); border-radius: 12px; margin: 15px 0; }
+        
+        .controls-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 15px; background: #f8f9fa; padding: 20px; border-radius: 15px; margin-bottom: 20px; text-align: left; }
+        .control-item label { display: block; font-size: 0.75rem; font-weight: bold; color: #636e72; margin-bottom: 5px; text-transform: uppercase; }
+        input[type=range] { width: 100%; accent-color: var(--primary); }
+
+        .action-btns { display: flex; gap: 10px; margin-bottom: 20px; }
+        button { flex: 1; padding: 15px; border: none; border-radius: 10px; font-weight: bold; cursor: pointer; transition: 0.2s; }
+        #recordBtn { background: var(--primary); color: white; }
+        #recordBtn.recording { background: var(--danger); animation: pulse 1s infinite; }
+        #stopBtn { background: #dfe6e9; color: #636e72; }
+        #stopBtn:not(:disabled) { background: #b2bec3; color: white; }
+
+        .tracks { text-align: left; border-top: 1px solid #eee; pt: 20px; }
+        .audio-item { background: #f1f2f6; padding: 10px; border-radius: 10px; margin-top: 10px; display: flex; align-items: center; justify-content: space-between; }
+        
+        @keyframes pulse { 0% { opacity: 1; } 50% { opacity: 0.6; } 100% { opacity: 1; } }
+    </style>
+</head>
+<body>
+
+<div class="studio-card">
+    <h1 style="margin:0 0 10px 0; font-size: 1.5rem;">Vocal Studio Pro</h1>
+    
+    <canvas id="viz"></canvas>
+
+    <div class="controls-grid">
+        <div class="control-item">
+            <label>Input Gain</label>
+            <input type="range" id="gain" min="0" max="2" step="0.1" value="1">
+        </div>
+        <div class="control-item">
+            <label>Pitch (Playback)</label>
+            <input type="range" id="pitch" min="0.5" max="2" step="0.1" value="1">
+        </div>
+        <div class="control-item">
+            <label>Echo Delay (Time)</label>
+            <input type="range" id="delayTime" min="0" max="1" step="0.05" value="0.3">
+        </div>
+        <div class="control-item">
+            <label>Echo Feedback (Wet)</label>
+            <input type="range" id="feedback" min="0" max="0.8" step="0.05" value="0">
+        </div>
+    </div>
+
+    <div class="action-btns">
+        <button id="recordBtn">Record Track</button>
+        <button id="stopBtn" disabled>Stop</button>
+    </div>
+
+    <div class="tracks" id="trackList">
+        <p style="font-size: 0.8rem; color: #b2bec3;">Recorded tracks will appear here...</p>
+    </div>
+</div>
+
+<script>
+    let audioCtx, stream, recorder, chunks = [];
+    let source, analyzer, gainNode, delayNode, feedbackNode;
+
+    const recordBtn = document.getElementById('recordBtn');
+    const stopBtn = document.getElementById('stopBtn');
+    const canvas = document.getElementById('viz');
+    const ctx = canvas.getContext('2d');
+
+    async function setupAudio() {
+        stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+        audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+        
+        source = audioCtx.createMediaStreamSource(stream);
+        gainNode = audioCtx.createGain();
+        analyzer = audioCtx.createAnalyser();
+        
+        // ECHO SETUP
+        delayNode = audioCtx.createDelay(1.0); // Max delay of 1 sec
+        feedbackNode = audioCtx.createGain();
+        
+        delayNode.delayTime.value = 0.3;
+        feedbackNode.gain.value = 0; // Default to no echo
+
+        // Routing: Source -> Gain -> Delay -> Feedback -> Delay (Loop)
+        // Also: Gain -> Analyzer (Visuals)
+        source.connect(gainNode);
+        gainNode.connect(analyzer);
+        
+        // Connect Echo Loop
+        gainNode.connect(delayNode);
+        delayNode.connect(feedbackNode);
+        feedbackNode.connect(delayNode);
+        
+        // Optional: Connect to speakers (USE HEADPHONES!)
+        // delayNode.connect(audioCtx.destination);
+        // gainNode.connect(audioCtx.destination);
+
+        recorder = new MediaRecorder(stream);
+        recorder.ondataavailable = e => chunks.push(e.data);
+        recorder.onstop = exportAudio;
+
+        visualize();
+    }
+
+    function visualize() {
+        const bufferLength = analyzer.frequencyBinCount;
+        const dataArray = new Uint8Array(bufferLength);
+        
+        function draw() {
+            requestAnimationFrame(draw);
+            analyzer.getByteFrequencyData(dataArray);
+            ctx.fillStyle = '#2d3436';
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
+            
+            const barWidth = (canvas.width / bufferLength) * 2;
+            let x = 0;
+            for(let i = 0; i < bufferLength; i++) {
+                let barHeight = dataArray[i] / 2.5;
+                ctx.fillStyle = `hsl(${250 + (i/2)}, 70%, 65%)`;
+                ctx.fillRect(x, canvas.height - barHeight, barWidth, barHeight);
+                x += barWidth + 1;
+            }
+        }
+        draw();
+    }
+
+    function exportAudio() {
+        const blob = new Blob(chunks, { type: 'audio/ogg; codecs=opus' });
+        chunks = [];
+        const url = URL.createObjectURL(blob);
+        const div = document.createElement('div');
+        div.className = 'audio-item';
+        div.innerHTML = `<audio controls src="${url}"></audio> <a href="${url}" download="take.ogg">💾</a>`;
+        document.getElementById('trackList').prepend(div);
+        applyPitch(); // Apply current pitch setting to new track
+    }
+
+    // --- Listeners ---
+    recordBtn.onclick = async () => {
+        if (!audioCtx) await setupAudio();
+        recorder.start();
+        recordBtn.classList.add('recording');
+        recordBtn.innerText = "Recording...";
+        recordBtn.disabled = true;
+        stopBtn.disabled = false;
+    };
+
+    stopBtn.onclick = () => {
+        recorder.stop();
+        recordBtn.classList.remove('recording');
+        recordBtn.innerText = "Record Track";
+        recordBtn.disabled = false;
+        stopBtn.disabled = true;
+    };
+
+    document.getElementById('gain').oninput = (e) => gainNode.gain.value = e.target.value;
+    document.getElementById('delayTime').oninput = (e) => delayNode.delayTime.value = e.target.value;
+    document.getElementById('feedback').oninput = (e) => feedbackNode.gain.value = e.target.value;
+    
+    function applyPitch() {
+        const rate = document.getElementById('pitch').value;
+        document.querySelectorAll('audio').forEach(a => a.playbackRate = rate);
+    }
+    document.getElementById('pitch').oninput = applyPitch;
+
+</script>
+</body>
+</html>
