@@ -52,6 +52,21 @@
             <label>Echo Feedback (Wet)</label>
             <input type="range" id="feedback" min="0" max="0.8" step="0.05" value="0">
         </div>
+        <div class="control-item">
+            <label>Voice Profile</label>
+            <select id="voiceProfile" style="width: 100%; padding: 5px; border-radius: 5px;">
+                <option value="normal">Normal (Default)</option>
+                <option value="female">Natural Female</option>
+                <option value="child">Child / Tiny</option>
+                <option value="deep">Deep / Radio</option>
+            </select>
+        </div>
+
+        <div class="action-btns">
+            <button id="recordBtn">Record Track</button>
+            <button id="stopBtn" disabled>Stop</button>
+        </div>
+        
     </div>
 
     <div class="action-btns">
@@ -170,6 +185,78 @@
     }
     document.getElementById('pitch').oninput = applyPitch;
 
+    let filterNode; // High-pass/Low-pass filter for character
+
+async function setupAudio() {
+    stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+    audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+    
+    source = audioCtx.createMediaStreamSource(stream);
+    gainNode = audioCtx.createGain();
+    filterNode = audioCtx.createBiquadFilter(); // New Filter
+    analyzer = audioCtx.createAnalyser();
+    
+    // Default Filter Setting (Off)
+    filterNode.type = "allpass"; 
+
+    // Routing: Source -> Filter -> Gain -> Delay/Recorder
+    source.connect(filterNode);
+    filterNode.connect(gainNode);
+    gainNode.connect(analyzer);
+    
+    // ... (rest of the echo routing from previous code)
+}
+
+// Voice Profile Logic
+document.getElementById('voiceProfile').onchange = function(e) {
+    const profile = e.target.value;
+    const pitchSlider = document.getElementById('pitch');
+    
+    if (profile === 'female') {
+        pitchSlider.value = 1.3;
+        filterNode.type = "highpass";
+        filterNode.frequency.value = 300; // Cut low-end "mumble"
+    } else if (profile === 'child') {
+        pitchSlider.value = 1.6;
+        filterNode.type = "highpass";
+        filterNode.frequency.value = 500; // Make it sound "smaller"
+    } else if (profile === 'deep') {
+        pitchSlider.value = 0.8;
+        filterNode.type = "lowpass";
+        filterNode.frequency.value = 1000;
+    } else {
+        pitchSlider.value = 1.0;
+        filterNode.type = "allpass";
+    }
+    applyPitch(); // Update the audio players
+};
+
+// Automatic "Pseudo" Save Folder
+function exportAudio() {
+    const blob = new Blob(chunks, { type: 'audio/ogg; codecs=opus' });
+    chunks = [];
+    const url = URL.createObjectURL(blob);
+    
+    // Generate a timestamped filename
+    const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
+    const fileName = `Studio_Track_${timestamp}.ogg`;
+
+    const div = document.createElement('div');
+    div.className = 'audio-item';
+    div.innerHTML = `
+        <span>${fileName}</span>
+        <audio controls src="${url}"></audio> 
+        <a href="${url}" download="${fileName}">Save to Device</a>
+    `;
+    document.getElementById('trackList').prepend(div);
+    
+    // TRIGGER AUTOMATIC DOWNLOAD
+    // This effectively "saves" it to the device's default Download folder
+    const hiddenLink = document.createElement('a');
+    hiddenLink.href = url;
+    hiddenLink.download = fileName;
+    hiddenLink.click();
+}
 </script>
 </body>
 </html>
