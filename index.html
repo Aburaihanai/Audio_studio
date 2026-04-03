@@ -1,9 +1,10 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
+    <link rel="manifest" href="manifest.json">
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Ultimate Audio Studio</title>
+    <title>Ultimate Audio Studio Pro</title>
     <style>
         :root { --primary: #6c5ce7; --danger: #ff7675; --success: #55efc4; --dark: #2d3436; }
         body { font-family: 'Segoe UI', sans-serif; background: #f0f2f5; display: flex; justify-content: center; padding: 20px; margin: 0; }
@@ -13,7 +14,7 @@
         
         .controls-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 15px; background: #f8f9fa; padding: 20px; border-radius: 15px; margin-bottom: 20px; text-align: left; }
         .control-item label { display: block; font-size: 0.75rem; font-weight: bold; color: #636e72; margin-bottom: 5px; text-transform: uppercase; }
-        input[type=range] { width: 100%; accent-color: var(--primary); }
+        input[type=range], select { width: 100%; accent-color: var(--primary); padding: 5px; border-radius: 5px; border: 1px solid #ddd; }
 
         .action-btns { display: flex; gap: 10px; margin-bottom: 20px; }
         button { flex: 1; padding: 15px; border: none; border-radius: 10px; font-weight: bold; cursor: pointer; transition: 0.2s; }
@@ -22,8 +23,10 @@
         #stopBtn { background: #dfe6e9; color: #636e72; }
         #stopBtn:not(:disabled) { background: #b2bec3; color: white; }
 
-        .tracks { text-align: left; border-top: 1px solid #eee; pt: 20px; }
-        .audio-item { background: #f1f2f6; padding: 10px; border-radius: 10px; margin-top: 10px; display: flex; align-items: center; justify-content: space-between; }
+        .tracks { text-align: left; border-top: 1px solid #eee; padding-top: 20px; }
+        .audio-item { background: #f1f2f6; padding: 12px; border-radius: 10px; margin-top: 10px; display: flex; flex-direction: column; gap: 8px; }
+        .audio-item span { font-size: 0.75rem; color: #636e72; font-family: monospace; }
+        .audio-controls { display: flex; align-items: center; justify-content: space-between; }
         
         @keyframes pulse { 0% { opacity: 1; } 50% { opacity: 0.6; } 100% { opacity: 1; } }
     </style>
@@ -52,21 +55,15 @@
             <label>Echo Feedback (Wet)</label>
             <input type="range" id="feedback" min="0" max="0.8" step="0.05" value="0">
         </div>
-        <div class="control-item">
+        <div class="control-item" style="grid-column: span 2;">
             <label>Voice Profile</label>
-            <select id="voiceProfile" style="width: 100%; padding: 5px; border-radius: 5px;">
+            <select id="voiceProfile">
                 <option value="normal">Normal (Default)</option>
                 <option value="female">Natural Female</option>
                 <option value="child">Child / Tiny</option>
                 <option value="deep">Deep / Radio</option>
             </select>
         </div>
-
-        <div class="action-btns">
-            <button id="recordBtn">Record Track</button>
-            <button id="stopBtn" disabled>Stop</button>
-        </div>
-        
     </div>
 
     <div class="action-btns">
@@ -75,13 +72,13 @@
     </div>
 
     <div class="tracks" id="trackList">
-        <p style="font-size: 0.8rem; color: #b2bec3;">Recorded tracks will appear here...</p>
+        <p id="emptyMsg" style="font-size: 0.8rem; color: #b2bec3; text-align: center;">Recorded tracks will appear here...</p>
     </div>
 </div>
 
 <script>
     let audioCtx, stream, recorder, chunks = [];
-    let source, analyzer, gainNode, delayNode, feedbackNode;
+    let source, analyzer, gainNode, delayNode, feedbackNode, filterNode;
 
     const recordBtn = document.getElementById('recordBtn');
     const stopBtn = document.getElementById('stopBtn');
@@ -89,39 +86,46 @@
     const ctx = canvas.getContext('2d');
 
     async function setupAudio() {
-        stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-        audioCtx = new (window.AudioContext || window.webkitAudioContext)();
-        
-        source = audioCtx.createMediaStreamSource(stream);
-        gainNode = audioCtx.createGain();
-        analyzer = audioCtx.createAnalyser();
-        
-        // ECHO SETUP
-        delayNode = audioCtx.createDelay(1.0); // Max delay of 1 sec
-        feedbackNode = audioCtx.createGain();
-        
-        delayNode.delayTime.value = 0.3;
-        feedbackNode.gain.value = 0; // Default to no echo
+        try {
+            stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+            audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+            
+            source = audioCtx.createMediaStreamSource(stream);
+            
+            // Nodes setup
+            filterNode = audioCtx.createBiquadFilter();
+            filterNode.type = "allpass";
+            
+            gainNode = audioCtx.createGain();
+            analyzer = audioCtx.createAnalyser();
+            
+            delayNode = audioCtx.createDelay(1.0);
+            feedbackNode = audioCtx.createGain();
+            feedbackNode.gain.value = 0; 
 
-        // Routing: Source -> Gain -> Delay -> Feedback -> Delay (Loop)
-        // Also: Gain -> Analyzer (Visuals)
-        source.connect(gainNode);
-        gainNode.connect(analyzer);
-        
-        // Connect Echo Loop
-        gainNode.connect(delayNode);
-        delayNode.connect(feedbackNode);
-        feedbackNode.connect(delayNode);
-        
-        // Optional: Connect to speakers (USE HEADPHONES!)
-        // delayNode.connect(audioCtx.destination);
-        // gainNode.connect(audioCtx.destination);
+            // --- SIGNAL CHAIN ---
+            // Source -> Filter -> Gain -> Analyzer
+            source.connect(filterNode);
+            filterNode.connect(gainNode);
+            gainNode.connect(analyzer);
+            
+            // Echo Loop (Connected to GainNode output)
+            gainNode.connect(delayNode);
+            delayNode.connect(feedbackNode);
+            feedbackNode.connect(delayNode);
+            
+            // To hear yourself (Only if using headphones!)
+            // gainNode.connect(audioCtx.destination);
+            // delayNode.connect(audioCtx.destination);
 
-        recorder = new MediaRecorder(stream);
-        recorder.ondataavailable = e => chunks.push(e.data);
-        recorder.onstop = exportAudio;
+            recorder = new MediaRecorder(stream);
+            recorder.ondataavailable = e => chunks.push(e.data);
+            recorder.onstop = exportAudio;
 
-        visualize();
+            visualize();
+        } catch (err) {
+            alert("Mic access denied or not supported.");
+        }
     }
 
     function visualize() {
@@ -150,16 +154,36 @@
         const blob = new Blob(chunks, { type: 'audio/ogg; codecs=opus' });
         chunks = [];
         const url = URL.createObjectURL(blob);
+        
+        const timestamp = new Date().toLocaleTimeString();
+        const fileName = `Take_${timestamp.replace(/[: ]/g, '-')}.ogg`;
+
+        const emptyMsg = document.getElementById('emptyMsg');
+        if(emptyMsg) emptyMsg.remove();
+
         const div = document.createElement('div');
         div.className = 'audio-item';
-        div.innerHTML = `<audio controls src="${url}"></audio> <a href="${url}" download="take.ogg">💾</a>`;
+        div.innerHTML = `
+            <span>${fileName}</span>
+            <div class="audio-controls">
+                <audio controls src="${url}"></audio>
+                <a href="${url}" download="${fileName}" style="text-decoration:none; font-size:1.2rem;">💾</a>
+            </div>
+        `;
         document.getElementById('trackList').prepend(div);
-        applyPitch(); // Apply current pitch setting to new track
+        applyPitch(); 
+
+        // Auto-download trigger
+        const link = document.createElement('a');
+        link.href = url;
+        link.download = fileName;
+        link.click();
     }
 
-    // --- Listeners ---
+    // --- Control Handlers ---
     recordBtn.onclick = async () => {
         if (!audioCtx) await setupAudio();
+        if (audioCtx.state === 'suspended') await audioCtx.resume();
         recorder.start();
         recordBtn.classList.add('recording');
         recordBtn.innerText = "Recording...";
@@ -185,78 +209,35 @@
     }
     document.getElementById('pitch').oninput = applyPitch;
 
-    let filterNode; // High-pass/Low-pass filter for character
+    document.getElementById('voiceProfile').onchange = function(e) {
+        const profile = e.target.value;
+        const pSlider = document.getElementById('pitch');
+        
+        if (profile === 'female') {
+            pSlider.value = 1.2;
+            filterNode.type = "highpass";
+            filterNode.frequency.value = 400;
+        } else if (profile === 'child') {
+            pSlider.value = 1.5;
+            filterNode.type = "highpass";
+            filterNode.frequency.value = 600;
+        } else if (profile === 'deep') {
+            pSlider.value = 0.8;
+            filterNode.type = "lowpass";
+            filterNode.frequency.value = 800;
+        } else {
+            pSlider.value = 1.0;
+            filterNode.type = "allpass";
+        }
+        applyPitch();
+    };
 
-async function setupAudio() {
-    stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-    audioCtx = new (window.AudioContext || window.webkitAudioContext)();
-    
-    source = audioCtx.createMediaStreamSource(stream);
-    gainNode = audioCtx.createGain();
-    filterNode = audioCtx.createBiquadFilter(); // New Filter
-    analyzer = audioCtx.createAnalyser();
-    
-    // Default Filter Setting (Off)
-    filterNode.type = "allpass"; 
-
-    // Routing: Source -> Filter -> Gain -> Delay/Recorder
-    source.connect(filterNode);
-    filterNode.connect(gainNode);
-    gainNode.connect(analyzer);
-    
-    // ... (rest of the echo routing from previous code)
-}
-
-// Voice Profile Logic
-document.getElementById('voiceProfile').onchange = function(e) {
-    const profile = e.target.value;
-    const pitchSlider = document.getElementById('pitch');
-    
-    if (profile === 'female') {
-        pitchSlider.value = 1.3;
-        filterNode.type = "highpass";
-        filterNode.frequency.value = 300; // Cut low-end "mumble"
-    } else if (profile === 'child') {
-        pitchSlider.value = 1.6;
-        filterNode.type = "highpass";
-        filterNode.frequency.value = 500; // Make it sound "smaller"
-    } else if (profile === 'deep') {
-        pitchSlider.value = 0.8;
-        filterNode.type = "lowpass";
-        filterNode.frequency.value = 1000;
-    } else {
-        pitchSlider.value = 1.0;
-        filterNode.type = "allpass";
+    // SW Registration
+    if ('serviceWorker' in navigator) {
+        window.addEventListener('load', () => {
+            navigator.serviceWorker.register('sw.js').catch(err => console.log(err));
+        });
     }
-    applyPitch(); // Update the audio players
-};
-
-// Automatic "Pseudo" Save Folder
-function exportAudio() {
-    const blob = new Blob(chunks, { type: 'audio/ogg; codecs=opus' });
-    chunks = [];
-    const url = URL.createObjectURL(blob);
-    
-    // Generate a timestamped filename
-    const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
-    const fileName = `Studio_Track_${timestamp}.ogg`;
-
-    const div = document.createElement('div');
-    div.className = 'audio-item';
-    div.innerHTML = `
-        <span>${fileName}</span>
-        <audio controls src="${url}"></audio> 
-        <a href="${url}" download="${fileName}">Save to Device</a>
-    `;
-    document.getElementById('trackList').prepend(div);
-    
-    // TRIGGER AUTOMATIC DOWNLOAD
-    // This effectively "saves" it to the device's default Download folder
-    const hiddenLink = document.createElement('a');
-    hiddenLink.href = url;
-    hiddenLink.download = fileName;
-    hiddenLink.click();
-}
 </script>
 </body>
 </html>
