@@ -8,15 +8,15 @@
     <style>
         :root { --primary: #6c5ce7; --danger: #ff7675; --success: #55efc4; --dark: #2d3436; --accent: #a29bfe; }
         body { font-family: 'Segoe UI', sans-serif; background: #f0f2f5; display: flex; justify-content: center; padding: 20px; margin: 0; }
-        .studio-card { background: white; padding: 30px; border-radius: 24px; box-shadow: 0 15px 35px rgba(0,0,0,0.1); width: 100%; max-width: 600px; text-align: center; }
+        .studio-card { background: white; padding: 30px; border-radius: 24px; box-shadow: 0 15px 35px rgba(0,0,0,0.1); width: 100%; max-width: 600px; }
         
-        h2 { color: var(--dark); margin: 0 0 15px 0; font-size: 1.5rem; }
+        h2 { color: var(--dark); text-align: center; margin: 0 0 15px 0; }
         canvas { width: 100%; height: 100px; background: var(--dark); border-radius: 12px; margin-bottom: 20px; }
         
-        .controls-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; background: #f8f9fa; padding: 15px; border-radius: 15px; margin-bottom: 20px; text-align: left; }
+        .controls-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; background: #f8f9fa; padding: 15px; border-radius: 15px; margin-bottom: 20px; }
         .control-item label { display: flex; justify-content: space-between; font-size: 0.7rem; font-weight: bold; color: #636e72; margin-bottom: 5px; text-transform: uppercase; }
         .control-item span { color: var(--primary); }
-        input[type=range] { width: 100%; accent-color: var(--primary); cursor: pointer; }
+        input[type=range], select { width: 100%; accent-color: var(--primary); cursor: pointer; border: 1px solid #ddd; border-radius: 4px; padding: 2px; }
 
         .action-btns { display: flex; gap: 10px; margin-bottom: 20px; }
         button { flex: 1; padding: 14px; border: none; border-radius: 12px; font-weight: bold; cursor: pointer; transition: 0.2s; font-size: 0.9rem; }
@@ -26,12 +26,11 @@
         #stopBtn { background: #dfe6e9; color: #636e72; }
         #stopBtn:not(:disabled) { background: var(--dark); color: white; }
 
-        .tracks { text-align: left; border-top: 1px solid #eee; padding-top: 20px; max-height: 300px; overflow-y: auto; }
-        .audio-item { background: #f1f2f6; padding: 15px; border-radius: 12px; margin-top: 10px; border-left: 4px solid var(--primary); }
+        .tracks { border-top: 1px solid #eee; padding-top: 20px; max-height: 300px; overflow-y: auto; }
+        .audio-item { background: #f1f2f6; padding: 15px; border-radius: 12px; margin-top: 10px; border-left: 4px solid var(--success); }
         .audio-item span { font-size: 0.7rem; color: #636e72; font-family: monospace; display: block; margin-bottom: 10px; }
         
-        audio { width: 100%; height: 35px; }
-        .download-link { display: inline-block; background: var(--success); color: #1e272e; font-size: 0.75rem; padding: 8px 12px; margin-top: 10px; text-decoration: none; border-radius: 6px; font-weight: bold; width: 100%; text-align: center; box-sizing: border-box; }
+        .download-link { display: inline-block; background: var(--success); color: #1e272e; font-size: 0.75rem; padding: 10px; margin-top: 10px; text-decoration: none; border-radius: 6px; font-weight: bold; width: 100%; text-align: center; box-sizing: border-box; }
         
         @keyframes pulse { 0% { opacity: 1; } 50% { opacity: 0.7; } 100% { opacity: 1; } }
     </style>
@@ -44,20 +43,25 @@
 
     <div class="controls-grid">
         <div class="control-item">
+            <label>Noise Remover <span><small id="nVal">Off</small></span></label>
+            <input type="range" id="noiseGate" min="-100" max="-20" step="1" value="-100">
+        </div>
+        <div class="control-item">
+            <label>Voice Tone</label>
+            <select id="voiceFilter">
+                <option value="none">Natural</option>
+                <option value="bright">Bright & Clear</option>
+                <option value="warm">Deep & Warm</option>
+                <option value="radio">Vintage Radio</option>
+            </select>
+        </div>
+        <div class="control-item">
             <label>Pitch <span>x<small id="pVal">1.0</small></span></label>
             <input type="range" id="pitchShift" min="0.5" max="2.0" step="0.1" value="1.0">
         </div>
         <div class="control-item">
-            <label>Volume <span><small id="vVal">100</small>%</span></label>
+            <label>Gain <span><small id="vVal">100</small>%</span></label>
             <input type="range" id="gainNode" min="0" max="2" step="0.1" value="1">
-        </div>
-        <div class="control-item">
-            <label>Echo <span><small id="eVal">0</small>s</span></label>
-            <input type="range" id="echoDelay" min="0" max="1" step="0.1" value="0">
-        </div>
-        <div class="control-item">
-            <label>Reverb <span><small id="rVal">0</small></span></label>
-            <input type="range" id="reverbMix" min="0" max="1" step="0.1" value="0">
         </div>
     </div>
 
@@ -67,117 +71,131 @@
     </div>
 
     <div class="tracks" id="tracksContainer">
-        <small style="color:#b2bec3">Recorded sequences will appear here</small>
+        <small style="color:#b2bec3">Processing happens live during recording...</small>
     </div>
 </div>
 
 <script>
     let mediaRecorder;
     let audioChunks = [];
-    let audioCtx;
-    let analyser;
+    let audioCtx, streamSource, gateNode, filterNode, gainNode, destNode;
+    
     const canvas = document.getElementById('visualizer');
     const canvasCtx = canvas.getContext('2d');
-
-    // UI Elements
     const recordBtn = document.getElementById('recordBtn');
     const stopBtn = document.getElementById('stopBtn');
     const tracksContainer = document.getElementById('tracksContainer');
 
-    // Update labels helper
-    const updateLabel = (id, val) => document.getElementById(id).innerText = val;
-
     recordBtn.onclick = async () => {
         try {
             const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+            audioCtx = new (window.AudioContext || window.webkitAudioContext)();
             
-            // Re-initialize Audio Context on user gesture
-            if (!audioCtx) {
-                audioCtx = new (window.AudioContext || window.webkitAudioContext)();
-            } else if (audioCtx.state === 'suspended') {
-                await audioCtx.resume();
-            }
+            // 1. Setup Nodes
+            streamSource = audioCtx.createMediaStreamSource(stream);
+            gateNode = audioCtx.createDynamicsCompressor(); // Using compressor as a Gate
+            filterNode = audioCtx.createBiquadFilter();
+            gainNode = audioCtx.createGain();
+            destNode = audioCtx.createMediaStreamDestination(); // Capture processed audio
 
-            analyser = audioCtx.createAnalyser();
-            const source = audioCtx.createMediaStreamSource(stream);
-            source.connect(analyser);
-            
-            visualize();
+            // 2. Configure Noise Gate (Compressor)
+            gateNode.threshold.value = document.getElementById('noiseGate').value;
+            gateNode.ratio.value = 12; // Harsh ratio to act as gate
 
-            mediaRecorder = new MediaRecorder(stream);
+            // 3. Configure Tone Filter
+            applyTone(document.getElementById('voiceFilter').value);
+
+            // 4. Connect Graph: Source -> Gate -> Filter -> Gain -> Destination (for recording)
+            streamSource.connect(gateNode);
+            gateNode.connect(filterNode);
+            filterNode.connect(gainNode);
+            gainNode.connect(destNode);
+
+            // Visualizer connects to gain
+            const analyser = audioCtx.createAnalyser();
+            gainNode.connect(analyser);
+            visualize(analyser);
+
+            // Record from the Destination Node (Processed Audio)
+            mediaRecorder = new MediaRecorder(destNode.stream);
             mediaRecorder.start();
             
-            audioChunks = []; // Reset chunks
+            audioChunks = [];
             recordBtn.classList.add('recording');
-            recordBtn.innerText = "🔴 Recording...";
+            recordBtn.innerText = "🔴 Recording Pro...";
             recordBtn.disabled = true;
             stopBtn.disabled = false;
 
-            mediaRecorder.ondataavailable = e => {
-                if (e.data.size > 0) audioChunks.push(e.data);
-            };
-            
+            mediaRecorder.ondataavailable = e => audioChunks.push(e.data);
             mediaRecorder.onstop = () => {
-                const audioBlob = new Blob(audioChunks, { type: 'audio/mp3' }); // Saved as webm/mp3 container
-                const audioUrl = URL.createObjectURL(audioBlob);
-                addTrackItem(audioUrl);
+                const audioBlob = new Blob(audioChunks, { type: 'audio/mp3' });
+                addTrackItem(URL.createObjectURL(audioBlob));
             };
         } catch (err) {
-            console.error("Microphone access denied or error:", err);
-            alert("Could not start recording. Please ensure microphone permissions are granted.");
+            alert("Microphone error: " + err);
         }
     };
 
     stopBtn.onclick = () => {
         mediaRecorder.stop();
+        audioCtx.close();
         recordBtn.classList.remove('recording');
         recordBtn.innerText = "Start Recording";
         recordBtn.disabled = false;
         stopBtn.disabled = true;
     };
 
+    function applyTone(type) {
+        if (!filterNode) return;
+        switch(type) {
+            case 'bright': 
+                filterNode.type = 'highshelf'; 
+                filterNode.frequency.value = 3000; 
+                filterNode.gain.value = 10; 
+                break;
+            case 'warm': 
+                filterNode.type = 'lowshelf'; 
+                filterNode.frequency.value = 500; 
+                filterNode.gain.value = 8; 
+                break;
+            case 'radio': 
+                filterNode.type = 'bandpass'; 
+                filterNode.frequency.value = 1500; 
+                filterNode.Q.value = 1; 
+                break;
+            default: 
+                filterNode.type = 'allpass'; 
+        }
+    }
+
     function addTrackItem(url) {
         const div = document.createElement('div');
         div.className = 'audio-item';
-        
-        const timestamp = new Date().toLocaleTimeString();
         const pitch = document.getElementById('pitchShift').value;
-        const vol = document.getElementById('gainNode').value;
         
         div.innerHTML = `
-            <span>TAKE_${Date.now()} | Pitch: ${pitch}x | Vol: ${vol * 100}%</span>
+            <span>PROCESSED_TAKE_${Date.now()}</span>
             <audio controls src="${url}"></audio>
-            <a href="${url}" download="recording_${Date.now()}.mp3" class="download-link">Download MP3</a>
+            <a href="${url}" download="studio_track_${Date.now()}.mp3" class="download-link">Download Processed MP3</a>
         `;
-        
         tracksContainer.prepend(div);
-        
-        // Apply pitch to the player
-        const player = div.querySelector('audio');
-        player.playbackRate = pitch;
-        player.volume = Math.min(vol, 1); // Clamp standard volume
+        div.querySelector('audio').playbackRate = pitch;
     }
 
-    function visualize() {
-        if (!analyser) return;
-        analyser.fftSize = 256;
+    function visualize(analyser) {
         const bufferLength = analyser.frequencyBinCount;
         const dataArray = new Uint8Array(bufferLength);
-
         function draw() {
+            if (audioCtx.state === 'closed') return;
             requestAnimationFrame(draw);
             analyser.getByteFrequencyData(dataArray);
-            
             canvasCtx.fillStyle = '#2d3436';
             canvasCtx.fillRect(0, 0, canvas.width, canvas.height);
-
             let barWidth = (canvas.width / bufferLength) * 2.5;
-            let barHeight;
             let x = 0;
-
             for(let i = 0; i < bufferLength; i++) {
-                barHeight = dataArray[i] / 2.5;
-                canvasCtx.fillStyle = `hsl(${250 + (barHeight)}, 70%, 65%)`;
+                let barHeight = dataArray[i] / 2;
+                canvasCtx.fillStyle = `hsl(${260 + (barHeight/2)}, 80%, 70%)`;
                 canvasCtx.fillRect(x, canvas.height - barHeight, barWidth, barHeight);
                 x += barWidth + 1;
             }
@@ -185,13 +203,20 @@
         draw();
     }
 
-    // Slider Listeners for UI Feedback
-    document.getElementById('pitchShift').oninput = (e) => updateLabel('pVal', e.target.value);
-    document.getElementById('gainNode').oninput = (e) => updateLabel('vVal', e.target.value * 100);
-    document.getElementById('echoDelay').oninput = (e) => updateLabel('eVal', e.target.value);
-    document.getElementById('reverbMix').oninput = (e) => updateLabel('rVal', e.target.value);
+    // UI Listeners
+    document.getElementById('noiseGate').oninput = (e) => {
+        const val = e.target.value;
+        document.getElementById('nVal').innerText = val == -100 ? "Off" : val + "dB";
+        if(gateNode) gateNode.threshold.value = val;
+    };
+    document.getElementById('pitchShift').oninput = (e) => document.getElementById('pVal').innerText = e.target.value;
+    document.getElementById('gainNode').oninput = (e) => {
+        const val = e.target.value;
+        document.getElementById('vVal').innerText = Math.round(val * 100);
+        if(gainNode) gainNode.gain.value = val;
+    };
+    document.getElementById('voiceFilter').onchange = (e) => applyTone(e.target.value);
 </script>
 
 </body>
 </html>
-    
